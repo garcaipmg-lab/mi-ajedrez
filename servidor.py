@@ -11,7 +11,8 @@ import threading
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=None)
+# Cámbialo por esto exactamente
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # --- BASE DE DATOS ---
 def init_db():
