@@ -756,7 +756,6 @@ def reunirse_a_sala(data):
     jugador_id = request.sid
     
     import time
-    time.sleep(0.05)
     
     nick = None
     for n, sid in usuarios_conectados.items():
