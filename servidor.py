@@ -1255,7 +1255,9 @@ def obtener_clasificacion(data):
         print(f"❌ Error al obtener clasificación: {e}")
         emit('clasificacion_response', {'categoria': categoria, 'jugadores': []})
 
-# --- INICIAR SERVIDOR ---
+# Inicializar SocketIO para producción (Render)
+socketio.init_app(app, async_mode='gevent', cors_allowed_origins="*")
+
 if __name__ == '__main__':
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -1273,7 +1275,6 @@ if __name__ == '__main__':
     print(f"📱 Otros PCs: http://{ip_local}:5000")
     print("="*50)
     
-    if __name__ == '__main__':
     # Para desarrollo local
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
 else:
