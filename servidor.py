@@ -1273,4 +1273,9 @@ if __name__ == '__main__':
     print(f"📱 Otros PCs: http://{ip_local}:5000")
     print("="*50)
     
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    if __name__ == '__main__':
+    # Para desarrollo local
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
+else:
+    # Para producción (Render, PythonAnywhere, etc.)
+    socketio.init_app(app, async_mode='eventlet')
