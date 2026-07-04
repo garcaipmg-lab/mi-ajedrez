@@ -1280,3 +1280,5 @@ if __name__ == '__main__':
 else:
     # Para producción (Render, PythonAnywhere, etc.)
     socketio.init_app(app, async_mode='eventlet')
+
+"Cambiar eventlet por gevent")
