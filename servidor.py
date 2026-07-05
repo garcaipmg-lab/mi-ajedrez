@@ -1256,7 +1256,7 @@ def obtener_clasificacion(data):
         emit('clasificacion_response', {'categoria': categoria, 'jugadores': []})
 
 # Inicializar SocketIO para producción (Render)
-socketio.init_app(app, async_mode='gevent', cors_allowed_origins="*")
+socketio.init_app(app, cors_allowed_origins="*")
 
 if __name__ == '__main__':
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
