@@ -1277,8 +1277,7 @@ if __name__ == '__main__':
     
     # Para desarrollo local
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
-else:
-    # Para producción (Render, PythonAnywhere, etc.)
+
     
 
 
