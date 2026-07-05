@@ -1279,6 +1279,6 @@ if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
 else:
     # Para producción (Render, PythonAnywhere, etc.)
-    socketio.init_app(app, async_mode='eventlet')
+    
 
-"Cambiar eventlet por gevent")
+
