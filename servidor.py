@@ -441,21 +441,44 @@ def login(data):
         if es_invitado:
             print(f"👤 Login de invitado: {nick}")
             
-            cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+            # Buscar usuario existente en la base de datos
+            cursor.execute('SELECT id, nick, elo_bullet, elo_blitz, elo_rapid, partidas_ganadas, partidas_perdidas, partidas_tablas FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
             usuario_existente = cursor.fetchone()
             
             if usuario_existente:
                 user_id = usuario_existente[0]
                 nick_real = usuario_existente[1]
+                elo_bullet = usuario_existente[2]
+                elo_blitz = usuario_existente[3]
+                elo_rapid = usuario_existente[4]
+                ganadas = usuario_existente[5]
+                perdidas = usuario_existente[6]
+                tablas = usuario_existente[7]
+                
                 conn.close()
                 
                 usuarios_conectados[nick_real] = sid
                 sids_activos[sid] = True
                 
                 print(f"✅ Invitado reconectado: {nick_real} (ID: {user_id})")
-                emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id, 'invitado': True})
+                print(f"📊 ELOs - Bullet: {elo_bullet}, Blitz: {elo_blitz}, Rapid: {elo_rapid}")
+                print(f"📊 Partidas - Ganadas: {ganadas}, Perdidas: {perdidas}, Tablas: {tablas}")
+                
+                emit('login_response', {
+                    'success': True, 
+                    'nick': nick_real, 
+                    'userId': user_id, 
+                    'invitado': True,
+                    'elo_bullet': elo_bullet,
+                    'elo_blitz': elo_blitz,
+                    'elo_rapid': elo_rapid,
+                    'partidas_ganadas': ganadas,
+                    'partidas_perdidas': perdidas,
+                    'partidas_tablas': tablas
+                })
                 return
             else:
+                # Crear nuevo usuario invitado
                 password_hash = hash_password('invitado_temporal')
                 cursor.execute(
                     '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) 
@@ -470,41 +493,18 @@ def login(data):
                 sids_activos[sid] = True
                 
                 print(f"✅ Nuevo invitado registrado: {nick} (ID: {user_id})")
-                emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
-                return
-        
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        user = cursor.fetchone()
-        conn.close()
-        
-        if not user:
-            emit('login_response', {'success': False, 'message': 'Usuario no encontrado'})
-            return
-        
-        user_id, nick_real, stored_password = user
-        
-        if verify_password(stored_password, password):
-            if nick_real in temporizadores_reconexion:
-                print(f"🔄 RECONEXIÓN DETECTADA para {nick_real}")
-                timer = temporizadores_reconexion[nick_real]
-                if hasattr(timer, 'cancel'):
-                    timer.cancel()
-                del temporizadores_reconexion[nick_real]
-                
-                if nick_real in usuarios_conectados:
-                    old_sid = usuarios_conectados[nick_real]
-                    if old_sid in sids_activos:
-                        del sids_activos[old_sid]
-                    del usuarios_conectados[nick_real]
-                
-                if nick_real in partidas_activas:
-                    del partidas_activas[nick_real]
-                
-                usuarios_conectados[nick_real] = sid
-                sids_activos[sid] = True
-                
-                print(f"✅ Reconexión exitosa: {nick_real} -> {sid}")
-                emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id, 'reconexion': True})
+                emit('login_response', {
+                    'success': True, 
+                    'nick': nick, 
+                    'userId': user_id, 
+                    'invitado': True,
+                    'elo_bullet': 1200,
+                    'elo_blitz': 1200,
+                    'elo_rapid': 1200,
+                    'partidas_ganadas': 0,
+                    'partidas_perdidas': 0,
+                    'partidas_tablas': 0
+                })
                 return
             
             if nick_real in usuarios_conectados:
