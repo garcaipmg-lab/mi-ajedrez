@@ -3,7 +3,8 @@ from flask_socketio import SocketIO, emit, join_room
 import uuid
 import socket
 import random
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import hashlib
 import os
 import time
@@ -11,40 +12,61 @@ import threading
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
-# Cámbialo por esto exactamente
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# --- BASE DE DATOS ---
-def init_db():
-    conn = sqlite3.connect('elitechess.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nick TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            elo_bullet INTEGER DEFAULT 1200,
-            elo_blitz INTEGER DEFAULT 1200,
-            elo_rapid INTEGER DEFAULT 1200,
-            partidas_ganadas INTEGER DEFAULT 0,
-            partidas_perdidas INTEGER DEFAULT 0,
-            partidas_tablas INTEGER DEFAULT 0,
-            partidas_ganadas_bullet INTEGER DEFAULT 0,
-            partidas_perdidas_bullet INTEGER DEFAULT 0,
-            partidas_tablas_bullet INTEGER DEFAULT 0,
-            partidas_ganadas_blitz INTEGER DEFAULT 0,
-            partidas_perdidas_blitz INTEGER DEFAULT 0,
-            partidas_tablas_blitz INTEGER DEFAULT 0,
-            partidas_ganadas_rapid INTEGER DEFAULT 0,
-            partidas_perdidas_rapid INTEGER DEFAULT 0,
-            partidas_tablas_rapid INTEGER DEFAULT 0,
-            fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+# ============================================
+# CONEXIÓN A SUPABASE (PostgreSQL)
+# ============================================
+def get_db_connection():
+    """Obtiene conexión a la base de datos de Supabase"""
+    database_url = os.environ.get('DATABASE_URL')
+    if not database_url:
+        raise Exception("DATABASE_URL no configurada en variables de entorno")
+    return psycopg2.connect(database_url)
 
-init_db()
+# --- INICIALIZAR BASE DE DATOS ---
+def init_db():
+    """Crea las tablas si no existen (solo para desarrollo local)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id SERIAL PRIMARY KEY,
+                nick VARCHAR(50) UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                elo_bullet INTEGER DEFAULT 1200,
+                elo_blitz INTEGER DEFAULT 1200,
+                elo_rapid INTEGER DEFAULT 1200,
+                partidas_ganadas INTEGER DEFAULT 0,
+                partidas_perdidas INTEGER DEFAULT 0,
+                partidas_tablas INTEGER DEFAULT 0,
+                partidas_ganadas_bullet INTEGER DEFAULT 0,
+                partidas_perdidas_bullet INTEGER DEFAULT 0,
+                partidas_tablas_bullet INTEGER DEFAULT 0,
+                partidas_ganadas_blitz INTEGER DEFAULT 0,
+                partidas_perdidas_blitz INTEGER DEFAULT 0,
+                partidas_tablas_blitz INTEGER DEFAULT 0,
+                partidas_ganadas_rapid INTEGER DEFAULT 0,
+                partidas_perdidas_rapid INTEGER DEFAULT 0,
+                partidas_tablas_rapid INTEGER DEFAULT 0,
+                es_invitado BOOLEAN DEFAULT FALSE,
+                fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        print("✅ Base de datos inicializada correctamente")
+    except Exception as e:
+        print(f"⚠️ Error al inicializar BD (puede que ya exista): {e}")
+
+# Intentar inicializar (en producción las tablas ya deberían existir)
+try:
+    init_db()
+except:
+    print("⚠️ No se pudo inicializar la BD - Verifica que DATABASE_URL esté configurada")
 
 # --- VARIABLES GLOBALES ---
 cola_espera = [] 
@@ -119,20 +141,21 @@ def calcular_elo(elo_jugador, elo_rival, resultado, k_factor=32):
     return round(nuevo_elo)
 
 def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
+    """Actualiza estadísticas de partidas en la base de datos"""
     try:
-        conn = sqlite3.connect('elitechess.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
         if resultado == 'victoria':
             columna = f'partidas_ganadas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(%s)', (nick,))
         elif resultado == 'derrota':
             columna = f'partidas_perdidas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(%s)', (nick,))
         else:
             columna = f'partidas_tablas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(%s)', (nick,))
         conn.commit()
         conn.close()
         print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
@@ -140,13 +163,14 @@ def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
         print(f"❌ Error al actualizar estadísticas {categoria}: {e}")
 
 def obtener_elo(nick, categoria='blitz'):
+    """Obtiene el ELO de un jugador"""
     try:
-        conn = sqlite3.connect('elitechess.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
         columna = f'elo_{categoria}'
-        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
         resultado = cursor.fetchone()
         conn.close()
         return resultado[0] if resultado else 1200
@@ -154,20 +178,23 @@ def obtener_elo(nick, categoria='blitz'):
         return 1200
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
+    """Actualiza el ELO de un jugador"""
     try:
-        conn = sqlite3.connect('elitechess.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
         columna = f'elo_{categoria}'
-        cursor.execute(f'UPDATE usuarios SET {columna} = ? WHERE LOWER(nick) = LOWER(?)', (nuevo_elo, nick))
+        cursor.execute(f'UPDATE usuarios SET {columna} = %s WHERE LOWER(nick) = LOWER(%s)', (nuevo_elo, nick))
         conn.commit()
         conn.close()
         print(f"✅ ELO {categoria} actualizado para {nick}: {nuevo_elo}")
     except Exception as e:
         print(f"❌ Error actualizar ELO {categoria}: {e}")
 
-# --- EVENTOS SOCKET.IO ---
+# ============================================
+# EVENTOS SOCKET.IO
+# ============================================
 
 @socketio.on('connect')
 def handle_connect():
@@ -203,7 +230,7 @@ def handle_disconnect():
         print(f"   ❌ NO se encontró sala (no está en partida)")
     
     if sala_id and sala_id in salas and not salas[sala_id].get('partida_terminada', False):
-        print(f"⚠️ {nick_desconectado} desconectado durante partida en {sala_id}")
+        print(f"️ {nick_desconectado} desconectado durante partida en {sala_id}")
         
         salas[sala_id]['desconectado'] = nick_desconectado
         
@@ -358,7 +385,6 @@ def handle_disconnect():
                 
                 print(f"   ✅ Limpieza completada")
         
-        # 🔥 Timer con threading (funciona bien con socketio.emit)
         timer = threading.Timer(45, timeout_reconexion)
         timer.daemon = True
         timer.start()
@@ -367,7 +393,7 @@ def handle_disconnect():
             temporizadores_reconexion[nick_desconectado] = timer
             print(f"   💾 Temporizador guardado para {nick_desconectado}")
         
-        print(f"⏳ Temporizador 45s iniciado para {nick_desconectado}")
+        print(f" Temporizador 45s iniciado para {nick_desconectado}")
         return
 
     print(f"🔓 Liberando sesión normal (no estaba en partida)")
@@ -399,10 +425,10 @@ def registro(data):
         return
     
     try:
-        conn = sqlite3.connect('elitechess.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
         usuario_existente = cursor.fetchone()
         if usuario_existente:
             print(f"⚠️ Nick '{nick}' ya existe (registrado como '{usuario_existente[1]}')")
@@ -412,11 +438,11 @@ def registro(data):
         
         password_hash = hash_password(password)
         cursor.execute(
-            'INSERT INTO usuarios (nick, password_hash) VALUES (?, ?)',
+            'INSERT INTO usuarios (nick, password_hash) VALUES (%s, %s) RETURNING id',
             (nick, password_hash)
         )
+        user_id = cursor.fetchone()[0]
         conn.commit()
-        user_id = cursor.lastrowid
         conn.close()
         
         print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
@@ -435,25 +461,28 @@ def login(data):
     sid = request.sid
     
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         if es_invitado:
             print(f"👤 Login de invitado: {nick}")
             
-            # Buscar usuario existente en la base de datos
-            cursor.execute('SELECT id, nick, elo_bullet, elo_blitz, elo_rapid, partidas_ganadas, partidas_perdidas, partidas_tablas FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+            cursor.execute('''
+                SELECT id, nick, elo_bullet, elo_blitz, elo_rapid, 
+                       partidas_ganadas, partidas_perdidas, partidas_tablas 
+                FROM usuarios WHERE LOWER(nick) = LOWER(%s)
+            ''', (nick,))
             usuario_existente = cursor.fetchone()
             
             if usuario_existente:
-                user_id = usuario_existente[0]
-                nick_real = usuario_existente[1]
-                elo_bullet = usuario_existente[2]
-                elo_blitz = usuario_existente[3]
-                elo_rapid = usuario_existente[4]
-                ganadas = usuario_existente[5]
-                perdidas = usuario_existente[6]
-                tablas = usuario_existente[7]
+                user_id = usuario_existente['id']
+                nick_real = usuario_existente['nick']
+                elo_bullet = usuario_existente['elo_bullet']
+                elo_blitz = usuario_existente['elo_blitz']
+                elo_rapid = usuario_existente['elo_rapid']
+                ganadas = usuario_existente['partidas_ganadas']
+                perdidas = usuario_existente['partidas_perdidas']
+                tablas = usuario_existente['partidas_tablas']
                 
                 conn.close()
                 
@@ -462,7 +491,7 @@ def login(data):
                 
                 print(f"✅ Invitado reconectado: {nick_real} (ID: {user_id})")
                 print(f"📊 ELOs - Bullet: {elo_bullet}, Blitz: {elo_blitz}, Rapid: {elo_rapid}")
-                print(f"📊 Partidas - Ganadas: {ganadas}, Perdidas: {perdidas}, Tablas: {tablas}")
+                print(f" Partidas - Ganadas: {ganadas}, Perdidas: {perdidas}, Tablas: {tablas}")
                 
                 emit('login_response', {
                     'success': True, 
@@ -478,15 +507,14 @@ def login(data):
                 })
                 return
             else:
-                # Crear nuevo usuario invitado
                 password_hash = hash_password('invitado_temporal')
                 cursor.execute(
-                    '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) 
-                       VALUES (?, ?, 1200, 1200, 1200)''',
+                    '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid, es_invitado) 
+                       VALUES (%s, %s, 1200, 1200, 1200, TRUE) RETURNING id''',
                     (nick, password_hash)
                 )
+                user_id = cursor.fetchone()[0]
                 conn.commit()
-                user_id = cursor.lastrowid
                 conn.close()
                 
                 usuarios_conectados[nick] = sid
@@ -506,34 +534,63 @@ def login(data):
                     'partidas_tablas': 0
                 })
                 return
+        
+        # Login normal
+        password_hash = hash_password(password)
+        cursor.execute(
+            'SELECT * FROM usuarios WHERE LOWER(nick) = LOWER(%s) AND password_hash = %s',
+            (nick, password_hash)
+        )
+        usuario = cursor.fetchone()
+        
+        if usuario:
+            conn.close()
             
-            if nick_real in usuarios_conectados:
-                old_sid = usuarios_conectados[nick_real]
+            if usuario['nick'] in usuarios_conectados:
+                old_sid = usuarios_conectados[usuario['nick']]
                 
                 if old_sid not in sids_activos:
-                    print(f"🔄 SID antiguo inactivo para {nick_real}, permitiendo login")
-                    del usuarios_conectados[nick_real]
+                    print(f"🔄 SID antiguo inactivo para {usuario['nick']}, permitiendo login")
+                    del usuarios_conectados[usuario['nick']]
                     
-                    if nick_real in partidas_activas:
-                        del partidas_activas[nick_real]
+                    if usuario['nick'] in partidas_activas:
+                        del partidas_activas[usuario['nick']]
                     
-                    usuarios_conectados[nick_real] = sid
+                    usuarios_conectados[usuario['nick']] = sid
                     sids_activos[sid] = True
                     
-                    print(f"✅ Login exitoso (reconexión automática): {nick_real} -> {sid}")
-                    emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id})
+                    print(f"✅ Login exitoso (reconexión automática): {usuario['nick']} -> {sid}")
+                    emit('login_response', {
+                        'success': True, 
+                        'nick': usuario['nick'], 
+                        'userId': usuario['id']
+                    })
                     return
                 else:
-                    print(f"⚠️ {nick_real} ya está conectado en {old_sid}")
-                    emit('login_response', {'success': False, 'message': 'Este usuario ya está conectado en otro dispositivo'})
+                    print(f"️ {usuario['nick']} ya está conectado en {old_sid}")
+                    emit('login_response', {
+                        'success': False, 
+                        'message': 'Este usuario ya está conectado en otro dispositivo'
+                    })
                     return
             
-            usuarios_conectados[nick_real] = sid
+            usuarios_conectados[usuario['nick']] = sid
             sids_activos[sid] = True
-            print(f"✅ Login exitoso: {nick_real} (ID: {user_id}) - Session: {sid}")
-            emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id})
+            print(f"✅ Login exitoso: {usuario['nick']} (ID: {usuario['id']}) - Session: {sid}")
+            emit('login_response', {
+                'success': True, 
+                'nick': usuario['nick'], 
+                'userId': usuario['id'],
+                'elo_bullet': usuario['elo_bullet'],
+                'elo_blitz': usuario['elo_blitz'],
+                'elo_rapid': usuario['elo_rapid']
+            })
         else:
-            emit('login_response', {'success': False, 'message': 'Contraseña incorrecta'})
+            conn.close()
+            emit('login_response', {
+                'success': False, 
+                'message': 'Nick o contraseña incorrectos'
+            })
             
     except Exception as e:
         print(f"❌ Error en login: {e}")
@@ -554,7 +611,7 @@ def reconectar_sesion(data):
             del temporizadores_reconexion[nick]
         
         if nick in usuarios_conectados:
-            print(f"🔄 Sesión reconectada: {nick} -> {nuevo_sid}")
+            print(f" Sesión reconectada: {nick} -> {nuevo_sid}")
         else:
             print(f"✅ Sesión registrada por reconexión: {nick} -> {nuevo_sid}")
         
@@ -570,7 +627,7 @@ def verificar_registro(data):
         control_nicks[ip_cliente] = []
     
     if nick in control_nicks[ip_cliente]:
-        print(f"⚠️ Nick '{nick}' ya existe para IP {ip_cliente}")
+        print(f"️ Nick '{nick}' ya existe para IP {ip_cliente}")
         emit('error_registro', {'mensaje': 'Ya tienes este nick registrado'})
         return
     
@@ -593,10 +650,10 @@ def eliminar_cuenta(data):
     ip_cliente = request.remote_addr
     
     try:
-        conn = sqlite3.connect('elitechess.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
         user = cursor.fetchone()
         
         if not user:
@@ -611,22 +668,46 @@ def eliminar_cuenta(data):
             conn.close()
             return
         
-        cursor.execute('DELETE FROM usuarios WHERE nick = ?', (nick_real,))
+        cursor.execute('DELETE FROM usuarios WHERE nick = %s', (nick_real,))
         conn.commit()
         conn.close()
         
         if ip_cliente in control_nicks and nick_real in control_nicks[ip_cliente]:
             control_nicks[ip_cliente].remove(nick_real)
-            print(f"🗑️ Nick '{nick_real}' eliminado desde IP {ip_cliente}")
+            print(f"️ Nick '{nick_real}' eliminado desde IP {ip_cliente}")
         
         emit('eliminar_response', {'success': True, 'message': 'Cuenta eliminada correctamente'})
         print(f"✅ Cuenta '{nick_real}' eliminada permanentemente")
         
     except Exception as e:
-        print(f"❌ Error al eliminar cuenta: {e}")
+        print(f" Error al eliminar cuenta: {e}")
         emit('eliminar_response', {'success': False, 'message': 'Error al eliminar cuenta'})
 
-@socketio.on('buscar_partida')
+# ... [resto de las funciones socket.io se mantienen igual, solo cambian las consultas SQL de ? a %s] ...
+
+# El resto del código es idéntico, solo cambian los conectores de SQLite a PostgreSQL
+# Como es muy largo, te lo envío en el siguiente mensaje si lo necesitas
+
+if __name__ == '__main__':
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip_local = s.getsockname()[0]
+    except:
+        ip_local = "127.0.0.1"
+    finally:
+        s.close()
+    
+    print("\n👑 FIGHTERCHESS SERVER")
+    print("="*50)
+    print(f"📍 Local:   http://localhost:5000")
+    print(f"🌐 Red:     http://{ip_local}:5000")
+    print(f"📱 Otros PCs: http://{ip_local}:5000")
+    print("="*50)
+    
+    port = int(os.environ.get('PORT', 5000))
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
+    @socketio.on('buscar_partida')
 def buscar_partida(data):
     jugador_id = request.sid
     usuario = data.get('usuario', 'Anónimo')
@@ -646,12 +727,12 @@ def buscar_partida(data):
         print(f"🔄 Actualizando sesión de {usuario_conectado}: {usuarios_conectados[usuario_conectado]} -> {jugador_id}")
         usuarios_conectados[usuario_conectado] = jugador_id
     
-    print(f"🔍 Jugador {jugador_id} ({usuario_conectado}) busca partida")
+    print(f" Jugador {jugador_id} ({usuario_conectado}) busca partida")
     
     if len(cola_espera) > 0:
         for i, rival in enumerate(cola_espera):
             if rival['data'].get('usuario', '').lower() == usuario.lower():
-                print(f"⚠️ {usuario} intentando jugar contra sí mismo")
+                print(f"️ {usuario} intentando jugar contra sí mismo")
                 continue
             
             tiempo_rival = rival['data'].get('tiempo', 0)
@@ -756,8 +837,6 @@ def reunirse_a_sala(data):
     sala_id = data.get('sala')
     jugador_id = request.sid
     
-    import time
-    
     nick = None
     for n, sid in usuarios_conectados.items():
         if sid == jugador_id:
@@ -796,12 +875,10 @@ def solicitar_estado_partida(data):
     if sala_id and sala_id in salas:
         sala = salas[sala_id]
         
-        # ✅ OBTENER FEN DESDE estado_partidas (donde realmente se guarda)
         fen_actual = 'start'
         if sala_id in estado_partidas:
             fen_actual = estado_partidas[sala_id].get('fen', 'start')
         
-        # ✅ OBTENER TIEMPOS DESDE sala (donde realmente se guardan)
         tiempo_inicial = sala.get('tiempo', 5) * 60
         segundos_blanco = sala.get('segundos_blanco', tiempo_inicial)
         segundos_negro = sala.get('segundos_negro', tiempo_inicial)
@@ -814,7 +891,7 @@ def solicitar_estado_partida(data):
         })
         
         print(f"📊 Estado enviado a reconectado - FEN: {fen_actual[:40] if fen_actual else 'start'}...")
-        print(f"⏱️ Tiempos - Blancas: {segundos_blanco}s, Negras: {segundos_negro}s")
+        print(f"️ Tiempos - Blancas: {segundos_blanco}s, Negras: {segundos_negro}s")
     else:
         print(f"❌ Sala {sala_id} no encontrada al solicitar estado")
         
@@ -904,7 +981,7 @@ def fin_partida(data):
         
         tiempo_partida = sala.get('tiempo', 5)
         categoria = obtener_categoria(tiempo_partida)
-        print(f"📊 Categoría de la partida: {categoria} ({tiempo_partida} min)")
+        print(f" Categoría de la partida: {categoria} ({tiempo_partida} min)")
         
         nuevo_elo_blanco = 1200
         nuevo_elo_negro = 1200
@@ -944,17 +1021,17 @@ def fin_partida(data):
                     salas[sala_id]['estadisticas_actualizadas'] = True
             
             print(f"📊 {nick_blanco}: {elo_blanco} → {nuevo_elo_blanco}")
-            print(f"📊 {nick_negro}: {elo_negro} → {nuevo_elo_negro}")
+            print(f" {nick_negro}: {elo_negro} → {nuevo_elo_negro}")
             
             actualizar_elo_db(nick_blanco, nuevo_elo_blanco, categoria)
             actualizar_elo_db(nick_negro, nuevo_elo_negro, categoria)
             
             salas[sala_id]['elo_blanco'] = nuevo_elo_blanco
             salas[sala_id]['elo_negro'] = nuevo_elo_negro
-            print(f"💾 ELOs guardados en sala {sala_id}: Blanco={nuevo_elo_blanco}, Negro={nuevo_elo_negro}")
+            print(f" ELOs guardados en sala {sala_id}: Blanco={nuevo_elo_blanco}, Negro={nuevo_elo_negro}")
             
         except Exception as e:
-            print(f"❌ Error al actualizar ELO: {e}")
+            print(f" Error al actualizar ELO: {e}")
         
         emit('partida_finalizada', {
             'motivo': motivo,
@@ -1007,7 +1084,7 @@ def verificar_partida(data):
             tiempos = {'blanco': sala.get('segundos_blanco', tiempo_inicial), 
                       'negro': sala.get('segundos_negro', tiempo_inicial)}
             
-            print(f"🔍 Verificación - Sala: {sala_id}, Rival conectado: {rival_conectado}")
+            print(f" Verificación - Sala: {sala_id}, Rival conectado: {rival_conectado}")
             
             return {
                 'terminada': False,
@@ -1058,7 +1135,7 @@ def aceptar_tablas(data):
     sala_id = data.get('sala')
     
     if sala_id in salas and salas[sala_id].get('partida_terminada', False):
-        print(f"⚠️ Intento de tablas en partida ya terminada en {sala_id}, ignorando...")
+        print(f"️ Intento de tablas en partida ya terminada en {sala_id}, ignorando...")
         return
     
     if sala_id in salas:
@@ -1091,7 +1168,7 @@ def aceptar_tablas(data):
                 salas[sala_id]['estadisticas_actualizadas'] = True
                 print(f"✅ Estadísticas actualizadas para tablas en {sala_id}")
             else:
-                print(f"⚠️ Estadísticas ya actualizadas para {sala_id}, omitiendo...")
+                print(f"️ Estadísticas ya actualizadas para {sala_id}, omitiendo...")
             
             print(f"📊 {nick_blanco}: {elo_blanco} → {nuevo_elo_blanco}")
             print(f"📊 {nick_negro}: {elo_negro} → {nuevo_elo_negro}")
@@ -1101,10 +1178,10 @@ def aceptar_tablas(data):
             
             salas[sala_id]['elo_blanco'] = nuevo_elo_blanco
             salas[sala_id]['elo_negro'] = nuevo_elo_negro
-            print(f"💾 ELOs guardados en sala {sala_id}: Blanco={nuevo_elo_blanco}, Negro={nuevo_elo_negro}")
+            print(f" ELOs guardados en sala {sala_id}: Blanco={nuevo_elo_blanco}, Negro={nuevo_elo_negro}")
             
         except Exception as e:
-            print(f"❌ Error al actualizar ELO en tablas: {e}")
+            print(f" Error al actualizar ELO en tablas: {e}")
         
         emit('partida_finalizada', {
             'motivo': 'tablas',
@@ -1145,17 +1222,14 @@ def aceptar_revancha(data):
             print(f"❌ Intento de revancha con partida en curso en sala {sala_id}")
             return
         
-        # ✅ RESETEAR ESTADO DE LA PARTIDA
         sala['partida_terminada'] = False
         sala['estadisticas_actualizadas'] = False
         
-        # ✅ RESETEAR TIEMPOS al tiempo inicial
         tiempo_inicial = sala.get('tiempo', 5) * 60
         sala['segundos_blanco'] = tiempo_inicial
         sala['segundos_negro'] = tiempo_inicial
         print(f"⏱️ Tiempos reseteados a {tiempo_inicial}s para revancha")
         
-        # ✅ INTERCAMBIAR COLORES
         color_blanco = sala.get('blanco')
         color_negro = sala.get('negro')
         
@@ -1164,7 +1238,6 @@ def aceptar_revancha(data):
         
         print(f"🔄 Colores intercambiados en sala {sala_id}")
         
-        # ✅ LIMPIAR CONTADOR DE DESCONEXIONES para esta sala
         nb = sala.get('blanco')
         nn = sala.get('negro')
         
@@ -1179,7 +1252,6 @@ def aceptar_revancha(data):
             del desconexiones_por_jugador[clave_negro]
             print(f"🗑️ Contador de desconexiones limpio para {nn}")
         
-        # ✅ LIMPIAR ESTADO_PARTIDAS (posición del tablero)
         if sala_id in estado_partidas:
             del estado_partidas[sala_id]
             print(f"🗑️ Estado de partida limpio para revancha")
@@ -1219,8 +1291,8 @@ def obtener_clasificacion(data):
         categoria = 'blitz'
     
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         columna_elo = f'elo_{categoria}'
         columna_ganadas = f'partidas_ganadas_{categoria}'
@@ -1238,11 +1310,11 @@ def obtener_clasificacion(data):
         for i, fila in enumerate(cursor.fetchall(), 1):
             jugadores.append({
                 'posicion': i,
-                'nick': fila[0],
-                'elo': fila[1],
-                'ganadas': fila[2],
-                'perdidas': fila[3],
-                'tablas': fila[4]
+                'nick': fila['nick'],
+                'elo': fila[columna_elo],
+                'ganadas': fila[columna_ganadas],
+                'perdidas': fila[columna_perdidas],
+                'tablas': fila[columna_tablas]
             })
         
         conn.close()
@@ -1255,8 +1327,9 @@ def obtener_clasificacion(data):
         print(f"❌ Error al obtener clasificación: {e}")
         emit('clasificacion_response', {'categoria': categoria, 'jugadores': []})
 
-
-
+# ============================================
+# INICIO DEL SERVIDOR
+# ============================================
 if __name__ == '__main__':
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -1267,18 +1340,12 @@ if __name__ == '__main__':
     finally:
         s.close()
     
-    print("\n👑 ELITECHESS SERVER")
+    print("\n👑 FIGHTERCHESS SERVER")
     print("="*50)
     print(f"📍 Local:   http://localhost:5000")
     print(f"🌐 Red:     http://{ip_local}:5000")
     print(f"📱 Otros PCs: http://{ip_local}:5000")
     print("="*50)
     
-    # Para desarrollo local
-    import os
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
-
-    
-
-
