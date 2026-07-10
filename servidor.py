@@ -1245,34 +1245,27 @@ def obtener_clasificacion(data):
     if categoria not in ['bullet', 'blitz', 'rapid']:
         categoria = 'blitz'
     
-    try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
+      try:
         columna_elo = f'elo_{categoria}'
         columna_ganadas = f'partidas_ganadas_{categoria}'
         columna_perdidas = f'partidas_perdidas_{categoria}'
         columna_tablas = f'partidas_tablas_{categoria}'
         
-        cursor.execute(f'''
-            SELECT nick, {columna_elo}, {columna_ganadas}, {columna_perdidas}, {columna_tablas}
-            FROM usuarios 
-            ORDER BY {columna_elo} DESC 
-            LIMIT 50
-        ''')
+        result = supabase.table('usuarios').select(
+            f'nick, {columna_elo}, {columna_ganadas}, {columna_perdidas}, {columna_tablas}'
+        ).order(columna_elo, desc=True).limit(50).execute()
         
         jugadores = []
-        for i, fila in enumerate(cursor.fetchall(), 1):
+        for i, fila in enumerate(result.data, 1):
             jugadores.append({
                 'posicion': i,
-                'nick': fila[0],
-                'elo': fila[1],
-                'ganadas': fila[2],
-                'perdidas': fila[3],
-                'tablas': fila[4]
+                'nick': fila['nick'],
+                'elo': fila[columna_elo],
+                'ganadas': fila[columna_ganadas],
+                'perdidas': fila[columna_perdidas],
+                'tablas': fila[columna_tablas]
             })
         
-        conn.close()
         emit('clasificacion_response', {
             'categoria': categoria,
             'jugadores': jugadores
