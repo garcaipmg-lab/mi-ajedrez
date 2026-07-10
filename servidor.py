@@ -406,7 +406,7 @@ def login(data):
     sid = request.sid
     
     try:
-        conn = sqlite3.connect('elitechess.db')
+        
         cursor = conn.cursor()
         
         if es_invitado:
