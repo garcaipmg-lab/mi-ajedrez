@@ -424,7 +424,7 @@ def login(data):
     es_invitado = data.get('invitado', False)
     sid = request.sid
     
-        try:
+    try:
         if es_invitado:
             print(f"👤 Login de invitado: {nick}")
             
