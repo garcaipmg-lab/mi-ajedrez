@@ -3,7 +3,7 @@ from flask_socketio import SocketIO, emit, join_room
 import uuid
 import socket
 import random
-import psycopg2
+import sqlite3
 import hashlib
 import os
 import time
@@ -14,6 +14,36 @@ app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
 
 # --- BASE DE DATOS ---
+def init_db():
+    conn = sqlite3.connect('elitechess.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nick TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            elo_bullet INTEGER DEFAULT 1200,
+            elo_blitz INTEGER DEFAULT 1200,
+            elo_rapid INTEGER DEFAULT 1200,
+            partidas_ganadas INTEGER DEFAULT 0,
+            partidas_perdidas INTEGER DEFAULT 0,
+            partidas_tablas INTEGER DEFAULT 0,
+            partidas_ganadas_bullet INTEGER DEFAULT 0,
+            partidas_perdidas_bullet INTEGER DEFAULT 0,
+            partidas_tablas_bullet INTEGER DEFAULT 0,
+            partidas_ganadas_blitz INTEGER DEFAULT 0,
+            partidas_perdidas_blitz INTEGER DEFAULT 0,
+            partidas_tablas_blitz INTEGER DEFAULT 0,
+            partidas_ganadas_rapid INTEGER DEFAULT 0,
+            partidas_perdidas_rapid INTEGER DEFAULT 0,
+            partidas_tablas_rapid INTEGER DEFAULT 0,
+            fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # --- VARIABLES GLOBALES ---
 cola_espera = [] 
@@ -89,23 +119,19 @@ def calcular_elo(elo_jugador, elo_rival, resultado, k_factor=32):
 
 def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = sqlite3.connect('elitechess.db')
         cursor = conn.cursor()
-        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-            
         if resultado == 'victoria':
             columna = f'partidas_ganadas_{categoria}'
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         elif resultado == 'derrota':
             columna = f'partidas_perdidas_{categoria}'
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         else:
             columna = f'partidas_tablas_{categoria}'
-            
-        # Fíjate en el cambio de ? a %s
-        cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(%s)', (nick,))
-        
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         conn.commit()
         conn.close()
         print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
@@ -114,37 +140,26 @@ def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
 
 def obtener_elo(nick, categoria='blitz'):
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = sqlite3.connect('elitechess.db')
         cursor = conn.cursor()
-        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-        
         columna = f'elo_{categoria}'
-        # Cambio de ? a %s
-        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
+        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
         resultado = cursor.fetchone()
-        
         conn.close()
         return resultado[0] if resultado else 1200
-    except Exception as e:
-        print(f"❌ Error al obtener ELO: {e}")
+    except:
         return 1200
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = sqlite3.connect('elitechess.db')
         cursor = conn.cursor()
-        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-            
         columna = f'elo_{categoria}'
-        # Cambio de ? a %s
-        cursor.execute(f'UPDATE usuarios SET {columna} = %s WHERE LOWER(nick) = LOWER(%s)', (nuevo_elo, nick))
-        
+        cursor.execute(f'UPDATE usuarios SET {columna} = ? WHERE LOWER(nick) = LOWER(?)', (nuevo_elo, nick))
         conn.commit()
         conn.close()
         print(f"✅ ELO {categoria} actualizado para {nick}: {nuevo_elo}")
@@ -383,69 +398,24 @@ def registro(data):
         return
     
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = sqlite3.connect('elitechess.db')
         cursor = conn.cursor()
         
-        # Cambio de ? a %s
-        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
+        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
         usuario_existente = cursor.fetchone()
         if usuario_existente:
-            print(f"⚠️ Nick '{nick}' ya existe")
+            print(f"⚠️ Nick '{nick}' ya existe (registrado como '{usuario_existente[1]}')")
             emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
             conn.close()
             return
         
         password_hash = hash_password(password)
-        # Cambio de ? a %s y uso de RETURNING id para obtener el ID en PostgreSQL
         cursor.execute(
-            'INSERT INTO usuarios (nick, password_hash) VALUES (%s, %s) RETURNING id',
+            'INSERT INTO usuarios (nick, password_hash) VALUES (?, ?)',
             (nick, password_hash)
         )
-        user_id = cursor.fetchone()[0]
         conn.commit()
-        conn.close()
-        
-        print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
-        emit('registro_response', {'success': True})
-        
-    except Exception as e:
-        print(f"❌ Error en registro: {e}")
-        emit('registro_response', {'success': False, 'message': 'Error al registrar'})@socketio.on('registro')
-def registro(data):
-    global usuarios_conectados
-    nick = data.get('nick')
-    password = data.get('password')
-    
-    if nick.lower() in [n.lower() for n in usuarios_conectados.keys()]:
-        emit('registro_response', {
-            'success': False, 
-            'message': 'Este usuario ya está conectado'
-        })
-        return
-    
-    try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        # Cambio de ? a %s
-        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
-        usuario_existente = cursor.fetchone()
-        if usuario_existente:
-            print(f"⚠️ Nick '{nick}' ya existe")
-            emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
-            conn.close()
-            return
-        
-        password_hash = hash_password(password)
-        # Cambio de ? a %s y uso de RETURNING id para obtener el ID en PostgreSQL
-        cursor.execute(
-            'INSERT INTO usuarios (nick, password_hash) VALUES (%s, %s) RETURNING id',
-            (nick, password_hash)
-        )
-        user_id = cursor.fetchone()[0]
-        conn.commit()
+        user_id = cursor.lastrowid
         conn.close()
         
         print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
@@ -464,37 +434,45 @@ def login(data):
     sid = request.sid
     
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = sqlite3.connect('elitechess.db')
         cursor = conn.cursor()
         
         if es_invitado:
             print(f"👤 Login de invitado: {nick}")
-            cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
+            
+            cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
             usuario_existente = cursor.fetchone()
             
             if usuario_existente:
-                user_id, nick_real = usuario_existente
+                user_id = usuario_existente[0]
+                nick_real = usuario_existente[1]
                 conn.close()
+                
                 usuarios_conectados[nick_real] = sid
                 sids_activos[sid] = True
+                
+                print(f"✅ Invitado reconectado: {nick_real} (ID: {user_id})")
                 emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id, 'invitado': True})
                 return
             else:
                 password_hash = hash_password('invitado_temporal')
                 cursor.execute(
-                    'INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) VALUES (%s, %s, 1200, 1200, 1200) RETURNING id',
+                    '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) 
+                       VALUES (?, ?, 1200, 1200, 1200)''',
                     (nick, password_hash)
                 )
-                user_id = cursor.fetchone()[0]
                 conn.commit()
+                user_id = cursor.lastrowid
                 conn.close()
+                
                 usuarios_conectados[nick] = sid
                 sids_activos[sid] = True
+                
+                print(f"✅ Nuevo invitado registrado: {nick} (ID: {user_id})")
                 emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
                 return
         
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
+        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
         user = cursor.fetchone()
         conn.close()
         
@@ -505,9 +483,53 @@ def login(data):
         user_id, nick_real, stored_password = user
         
         if verify_password(stored_password, password):
-            # ... (aquí mantienes toda tu lógica de reconexión igual, solo asegúrate de no llamar a sqlite3)
+            if nick_real in temporizadores_reconexion:
+                print(f"🔄 RECONEXIÓN DETECTADA para {nick_real}")
+                timer = temporizadores_reconexion[nick_real]
+                if hasattr(timer, 'cancel'):
+                    timer.cancel()
+                del temporizadores_reconexion[nick_real]
+                
+                if nick_real in usuarios_conectados:
+                    old_sid = usuarios_conectados[nick_real]
+                    if old_sid in sids_activos:
+                        del sids_activos[old_sid]
+                    del usuarios_conectados[nick_real]
+                
+                if nick_real in partidas_activas:
+                    del partidas_activas[nick_real]
+                
+                usuarios_conectados[nick_real] = sid
+                sids_activos[sid] = True
+                
+                print(f"✅ Reconexión exitosa: {nick_real} -> {sid}")
+                emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id, 'reconexion': True})
+                return
+            
+            if nick_real in usuarios_conectados:
+                old_sid = usuarios_conectados[nick_real]
+                
+                if old_sid not in sids_activos:
+                    print(f"🔄 SID antiguo inactivo para {nick_real}, permitiendo login")
+                    del usuarios_conectados[nick_real]
+                    
+                    if nick_real in partidas_activas:
+                        del partidas_activas[nick_real]
+                    
+                    usuarios_conectados[nick_real] = sid
+                    sids_activos[sid] = True
+                    
+                    print(f"✅ Login exitoso (reconexión automática): {nick_real} -> {sid}")
+                    emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id})
+                    return
+                else:
+                    print(f"⚠️ {nick_real} ya está conectado en {old_sid}")
+                    emit('login_response', {'success': False, 'message': 'Este usuario ya está conectado en otro dispositivo'})
+                    return
+            
             usuarios_conectados[nick_real] = sid
             sids_activos[sid] = True
+            print(f"✅ Login exitoso: {nick_real} (ID: {user_id}) - Session: {sid}")
             emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id})
         else:
             emit('login_response', {'success': False, 'message': 'Contraseña incorrecta'})
@@ -564,6 +586,44 @@ def verificar_registro(data):
     emit('registro_permitido', {'nick': nick})
 
 @socketio.on('eliminar_cuenta')
+def eliminar_cuenta(data):
+    nick = data.get('nick')
+    password = data.get('password')
+    ip_cliente = request.remote_addr
+    
+    try:
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        user = cursor.fetchone()
+        
+        if not user:
+            emit('eliminar_response', {'success': False, 'message': 'Usuario no encontrado'})
+            conn.close()
+            return
+        
+        user_id, nick_real, stored_password = user
+        
+        if not verify_password(stored_password, password):
+            emit('eliminar_response', {'success': False, 'message': 'Contraseña incorrecta'})
+            conn.close()
+            return
+        
+        cursor.execute('DELETE FROM usuarios WHERE nick = ?', (nick_real,))
+        conn.commit()
+        conn.close()
+        
+        if ip_cliente in control_nicks and nick_real in control_nicks[ip_cliente]:
+            control_nicks[ip_cliente].remove(nick_real)
+            print(f"🗑️ Nick '{nick_real}' eliminado desde IP {ip_cliente}")
+        
+        emit('eliminar_response', {'success': True, 'message': 'Cuenta eliminada correctamente'})
+        print(f"✅ Cuenta '{nick_real}' eliminada permanentemente")
+        
+    except Exception as e:
+        print(f"❌ Error al eliminar cuenta: {e}")
+        emit('eliminar_response', {'success': False, 'message': 'Error al eliminar cuenta'})
 
 @socketio.on('buscar_partida')
 def buscar_partida(data):
