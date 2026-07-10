@@ -459,15 +459,8 @@ def login(data):
                 print(f"✅ Nuevo invitado registrado: {nick} (ID: {user_id})")
                 emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
                 return
-                
-                usuarios_conectados[nick] = sid
-                sids_activos[sid] = True
-                
-                print(f"✅ Nuevo invitado registrado: {nick} (ID: {user_id})")
-                emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
-                return
         
-   else:
+        # Login normal (no invitado)
         result = supabase.table('usuarios').select('id, nick, password_hash').ilike('nick', nick).execute()
         if result.data and len(result.data) > 0:
             user = (result.data[0]['id'], result.data[0]['nick'], result.data[0]['password_hash'])
@@ -529,6 +522,12 @@ def login(data):
             sids_activos[sid] = True
             print(f"✅ Login exitoso: {nick_real} (ID: {user_id}) - Session: {sid}")
             emit('login_response', {'success': True, 'nick': nick_real, 'userId': user_id})
+        else:
+            emit('login_response', {'success': False, 'message': 'Contraseña incorrecta'})
+            
+    except Exception as e:
+        print(f"❌ Error en login: {e}")
+        emit('login_response', {'success': False, 'message': 'Error al iniciar sesión'})
         else:
             emit('login_response', {'success': False, 'message': 'Contraseña incorrecta'})
             
