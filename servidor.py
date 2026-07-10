@@ -3,7 +3,7 @@ from flask_socketio import SocketIO, emit, join_room
 import uuid
 import socket
 import random
-import sqlite3
+import psycopg2
 import hashlib
 import os
 import time
@@ -14,36 +14,6 @@ app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
 
 # --- BASE DE DATOS ---
-def init_db():
-    conn = sqlite3.connect('elitechess.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nick TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            elo_bullet INTEGER DEFAULT 1200,
-            elo_blitz INTEGER DEFAULT 1200,
-            elo_rapid INTEGER DEFAULT 1200,
-            partidas_ganadas INTEGER DEFAULT 0,
-            partidas_perdidas INTEGER DEFAULT 0,
-            partidas_tablas INTEGER DEFAULT 0,
-            partidas_ganadas_bullet INTEGER DEFAULT 0,
-            partidas_perdidas_bullet INTEGER DEFAULT 0,
-            partidas_tablas_bullet INTEGER DEFAULT 0,
-            partidas_ganadas_blitz INTEGER DEFAULT 0,
-            partidas_perdidas_blitz INTEGER DEFAULT 0,
-            partidas_tablas_blitz INTEGER DEFAULT 0,
-            partidas_ganadas_rapid INTEGER DEFAULT 0,
-            partidas_perdidas_rapid INTEGER DEFAULT 0,
-            partidas_tablas_rapid INTEGER DEFAULT 0,
-            fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
 
 # --- VARIABLES GLOBALES ---
 cola_espera = [] 
@@ -398,7 +368,9 @@ def registro(data):
         return
     
     try:
-        conn = sqlite3.connect('elitechess.db')
+        # Usará la URL que pusimos en las variables de entorno de Render
+DATABASE_URL = os.environ.get('DATABASE_URL')
+conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
         cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
