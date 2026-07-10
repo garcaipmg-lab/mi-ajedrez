@@ -23,7 +23,12 @@ else:
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
-
+@socketio.on('connect')
+def test_connect():
+    print("🔌 CLIENTE CONECTADO AL SOCKET")
+@socketio.on('disconnect')
+def test_disconnect():
+    print("🔌 CLIENTE DESCONECTADO")    
 def init_db():
     # Ya no necesitamos crear tablas, Supabase las tiene
     print("✅ Base de datos Supabase inicializada")
