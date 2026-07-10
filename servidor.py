@@ -383,26 +383,69 @@ def registro(data):
         return
     
     try:
-        # Usará la URL que pusimos en las variables de entorno de Render
         DATABASE_URL = os.environ.get('DATABASE_URL')
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         
-        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        # Cambio de ? a %s
+        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
         usuario_existente = cursor.fetchone()
         if usuario_existente:
-            print(f"⚠️ Nick '{nick}' ya existe (registrado como '{usuario_existente[1]}')")
+            print(f"⚠️ Nick '{nick}' ya existe")
             emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
             conn.close()
             return
         
         password_hash = hash_password(password)
+        # Cambio de ? a %s y uso de RETURNING id para obtener el ID en PostgreSQL
         cursor.execute(
-            'INSERT INTO usuarios (nick, password_hash) VALUES (?, ?)',
+            'INSERT INTO usuarios (nick, password_hash) VALUES (%s, %s) RETURNING id',
             (nick, password_hash)
         )
+        user_id = cursor.fetchone()[0]
         conn.commit()
-        user_id = cursor.lastrowid
+        conn.close()
+        
+        print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
+        emit('registro_response', {'success': True})
+        
+    except Exception as e:
+        print(f"❌ Error en registro: {e}")
+        emit('registro_response', {'success': False, 'message': 'Error al registrar'})@socketio.on('registro')
+def registro(data):
+    global usuarios_conectados
+    nick = data.get('nick')
+    password = data.get('password')
+    
+    if nick.lower() in [n.lower() for n in usuarios_conectados.keys()]:
+        emit('registro_response', {
+            'success': False, 
+            'message': 'Este usuario ya está conectado'
+        })
+        return
+    
+    try:
+        DATABASE_URL = os.environ.get('DATABASE_URL')
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        # Cambio de ? a %s
+        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
+        usuario_existente = cursor.fetchone()
+        if usuario_existente:
+            print(f"⚠️ Nick '{nick}' ya existe")
+            emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
+            conn.close()
+            return
+        
+        password_hash = hash_password(password)
+        # Cambio de ? a %s y uso de RETURNING id para obtener el ID en PostgreSQL
+        cursor.execute(
+            'INSERT INTO usuarios (nick, password_hash) VALUES (%s, %s) RETURNING id',
+            (nick, password_hash)
+        )
+        user_id = cursor.fetchone()[0]
+        conn.commit()
         conn.close()
         
         print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
