@@ -1239,7 +1239,7 @@ def obtener_clasificacion(data):
     if categoria not in ['bullet', 'blitz', 'rapid']:
         categoria = 'blitz'
     
-      try:
+    try:
         columna_elo = f'elo_{categoria}'
         columna_ganadas = f'partidas_ganadas_{categoria}'
         columna_perdidas = f'partidas_perdidas_{categoria}'
