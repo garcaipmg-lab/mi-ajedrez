@@ -528,13 +528,7 @@ def login(data):
     except Exception as e:
         print(f"❌ Error en login: {e}")
         emit('login_response', {'success': False, 'message': 'Error al iniciar sesión'})
-        else:
-            emit('login_response', {'success': False, 'message': 'Contraseña incorrecta'})
-            
-    except Exception as e:
-        print(f"❌ Error en login: {e}")
-        emit('login_response', {'success': False, 'message': 'Error al iniciar sesión'})
-
+    
 @socketio.on('reconectar_sesion')
 def reconectar_sesion(data):
     global usuarios_conectados
