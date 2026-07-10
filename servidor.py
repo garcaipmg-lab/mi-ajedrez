@@ -114,16 +114,22 @@ def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
 
 def obtener_elo(nick, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
+        DATABASE_URL = os.environ.get('DATABASE_URL')
+        conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
+        
         columna = f'elo_{categoria}'
-        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        # Cambio de ? a %s
+        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(%s)', (nick,))
         resultado = cursor.fetchone()
+        
         conn.close()
         return resultado[0] if resultado else 1200
-    except:
+    except Exception as e:
+        print(f"❌ Error al obtener ELO: {e}")
         return 1200
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
