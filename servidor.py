@@ -370,7 +370,7 @@ def registro(data):
         return
     
     try:
-        conn = sqlite3.connect('elitechess.db')
+        
         cursor = conn.cursor()
         
         cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
