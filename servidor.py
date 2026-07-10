@@ -381,6 +381,7 @@ def handle_disconnect():
 
 @socketio.on('registro')
 def registro(data):
+    print(f"📩 EVENTO REGISTRO RECIBIDO - Data: {data}")
     global usuarios_conectados
     nick = data.get('nick')
     password = data.get('password')
