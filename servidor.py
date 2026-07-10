@@ -22,7 +22,7 @@ else:
     supabase = None
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
-socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
+socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10, async_mode='threading')
 @socketio.on('connect')
 def test_connect():
     print("🔌 CLIENTE CONECTADO AL SOCKET")
