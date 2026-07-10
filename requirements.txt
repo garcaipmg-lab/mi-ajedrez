@@ -3,3 +3,5 @@ Flask-SocketIO==5.3.6
 eventlet
 psycopg2-binary
 supabase
+gevent
+gevent-websocket
