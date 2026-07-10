@@ -8,43 +8,27 @@ import hashlib
 import os
 import time
 import threading
+from supabase import create_client, Client
 
+# --- CONEXIÓN SUPABASE ---
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("✅ Conectado a Supabase")
+else:
+    print("⚠️ Variables de entorno Supabase no configuradas")
+    supabase = None
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
 
-# --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('elitechess.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nick TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            elo_bullet INTEGER DEFAULT 1200,
-            elo_blitz INTEGER DEFAULT 1200,
-            elo_rapid INTEGER DEFAULT 1200,
-            partidas_ganadas INTEGER DEFAULT 0,
-            partidas_perdidas INTEGER DEFAULT 0,
-            partidas_tablas INTEGER DEFAULT 0,
-            partidas_ganadas_bullet INTEGER DEFAULT 0,
-            partidas_perdidas_bullet INTEGER DEFAULT 0,
-            partidas_tablas_bullet INTEGER DEFAULT 0,
-            partidas_ganadas_blitz INTEGER DEFAULT 0,
-            partidas_perdidas_blitz INTEGER DEFAULT 0,
-            partidas_tablas_blitz INTEGER DEFAULT 0,
-            partidas_ganadas_rapid INTEGER DEFAULT 0,
-            partidas_perdidas_rapid INTEGER DEFAULT 0,
-            partidas_tablas_rapid INTEGER DEFAULT 0,
-            fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    # Ya no necesitamos crear tablas, Supabase las tiene
+    print("✅ Base de datos Supabase inicializada")
 
 init_db()
-
 # --- VARIABLES GLOBALES ---
 cola_espera = [] 
 salas = {} 
