@@ -1,11 +1,19 @@
+import os
 import psycopg2
 
-# Pega aquí tu URL completa (la que copiamos de Supabase)
-DATABASE_URL = "postgresql://postgres:3JC94Nu5GzIpsDbM@db.stizpdyftzoeuwigxgbi.supabase.co:5432/postgres"
+print("Iniciando prueba de conexión...")
 
 try:
-    conn = psycopg2.connect(DATABASE_URL)
-    print("¡CONEXIÓN EXITOSA! Ya podemos hablar con la base de datos.")
-    conn.close()
+    # Obtenemos la variable de entorno que configuraste en Render
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    
+    if not DATABASE_URL:
+        print("❌ ERROR: La variable DATABASE_URL no está configurada en Render.")
+    else:
+        print(f"✅ Intentando conectar a: {DATABASE_URL[:20]}...") # Imprimimos solo el inicio por seguridad
+        conn = psycopg2.connect(DATABASE_URL)
+        print("¡ÉXITO! La conexión con Supabase funciona perfectamente.")
+        conn.close()
+        
 except Exception as e:
-    print("Error de conexión:", e)
+    print(f"❌ ERROR CRÍTICO DE CONEXIÓN: {e}")
