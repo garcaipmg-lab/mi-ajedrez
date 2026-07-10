@@ -3,7 +3,6 @@ from flask_socketio import SocketIO, emit, join_room
 import uuid
 import socket
 import random
-import sqlite3
 import hashlib
 import os
 import time
