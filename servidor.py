@@ -1221,7 +1221,7 @@ def obtener_clasificacion(data):
         categoria = 'blitz'
     
     try:
-        conn = sqlite3.connect('elitechess.db')
+        
         cursor = conn.cursor()
         
         columna_elo = f'elo_{categoria}'
