@@ -392,7 +392,7 @@ def registro(data):
         })
         return
     
-   try:
+    try:
         # Verificar si el usuario existe
         result = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
         if result.data and len(result.data) > 0:
