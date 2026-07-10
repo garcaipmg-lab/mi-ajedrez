@@ -70,7 +70,10 @@
 
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script>
-    const socket = io();
+    const socket = io('https://mi-ajedrez.onrender.com', {
+    transports: ['websocket', 'polling'],
+    withCredentials: true
+});
     let nickGlobal = '';
 
     function entrarAlJuego() {
