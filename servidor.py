@@ -8,32 +8,43 @@ import hashlib
 import os
 import time
 import threading
-from supabase import create_client, Client
 
-# --- CONEXIÓN SUPABASE ---
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
-
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Conectado a Supabase")
-else:
-    print("⚠️ Variables de entorno Supabase no configuradas")
-    supabase = None
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
-socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10, async_mode='gevent')
-@socketio.on('connect')
-def test_connect():
-    print("🔌 CLIENTE CONECTADO AL SOCKET")
-@socketio.on('disconnect')
-def test_disconnect():
-    print("🔌 CLIENTE DESCONECTADO")    
+socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
+
+# --- BASE DE DATOS ---
 def init_db():
-    # Ya no necesitamos crear tablas, Supabase las tiene
-    print("✅ Base de datos Supabase inicializada")
+    conn = sqlite3.connect('elitechess.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nick TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            elo_bullet INTEGER DEFAULT 1200,
+            elo_blitz INTEGER DEFAULT 1200,
+            elo_rapid INTEGER DEFAULT 1200,
+            partidas_ganadas INTEGER DEFAULT 0,
+            partidas_perdidas INTEGER DEFAULT 0,
+            partidas_tablas INTEGER DEFAULT 0,
+            partidas_ganadas_bullet INTEGER DEFAULT 0,
+            partidas_perdidas_bullet INTEGER DEFAULT 0,
+            partidas_tablas_bullet INTEGER DEFAULT 0,
+            partidas_ganadas_blitz INTEGER DEFAULT 0,
+            partidas_perdidas_blitz INTEGER DEFAULT 0,
+            partidas_tablas_blitz INTEGER DEFAULT 0,
+            partidas_ganadas_rapid INTEGER DEFAULT 0,
+            partidas_perdidas_rapid INTEGER DEFAULT 0,
+            partidas_tablas_rapid INTEGER DEFAULT 0,
+            fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 init_db()
+
 # --- VARIABLES GLOBALES ---
 cola_espera = [] 
 salas = {} 
@@ -108,60 +119,49 @@ def calcular_elo(elo_jugador, elo_rival, resultado, k_factor=32):
 
 def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
     try:
-        if supabase is None:
-            print("️ Supabase no configurado")
-            return
-        
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-        
-        columna = f'partidas_{resultado}_{categoria}'
-        
-        # Obtener valor actual
-        result = supabase.table('usuarios').select(columna).ilike('nick', nick).execute()
-        
-        if result.data and len(result.data) > 0:
-            valor_actual = result.data[0][columna]
-            supabase.table('usuarios').update({
-                columna: valor_actual + 1
-            }).ilike('nick', nick).execute()
-        
+        if resultado == 'victoria':
+            columna = f'partidas_ganadas_{categoria}'
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+        elif resultado == 'derrota':
+            columna = f'partidas_perdidas_{categoria}'
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+        else:
+            columna = f'partidas_tablas_{categoria}'
+            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+        conn.commit()
+        conn.close()
         print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
     except Exception as e:
         print(f"❌ Error al actualizar estadísticas {categoria}: {e}")
 
 def obtener_elo(nick, categoria='blitz'):
     try:
-        if supabase is None:
-            return 1200
-        
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-        
         columna = f'elo_{categoria}'
-        result = supabase.table('usuarios').select(columna).ilike('nick', nick).execute()
-        
-        if result.data and len(result.data) > 0:
-            return result.data[0][columna]
-        return 1200
-    except Exception as e:
-        print(f" Error obtener ELO: {e}")
+        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        resultado = cursor.fetchone()
+        conn.close()
+        return resultado[0] if resultado else 1200
+    except:
         return 1200
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
     try:
-        if supabase is None:
-            print("⚠️ Supabase no configurado")
-            return
-        
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-        
         columna = f'elo_{categoria}'
-        supabase.table('usuarios').update({
-            columna: nuevo_elo
-        }).ilike('nick', nick).execute()
-        
+        cursor.execute(f'UPDATE usuarios SET {columna} = ? WHERE LOWER(nick) = LOWER(?)', (nuevo_elo, nick))
+        conn.commit()
+        conn.close()
         print(f"✅ ELO {categoria} actualizado para {nick}: {nuevo_elo}")
     except Exception as e:
         print(f"❌ Error actualizar ELO {categoria}: {e}")
@@ -386,7 +386,6 @@ def handle_disconnect():
 
 @socketio.on('registro')
 def registro(data):
-    print(f"📩 EVENTO REGISTRO RECIBIDO - Data: {data}")
     global usuarios_conectados
     nick = data.get('nick')
     password = data.get('password')
@@ -399,22 +398,26 @@ def registro(data):
         return
     
     try:
-        # Verificar si el usuario existe
-        result = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
-        if result.data and len(result.data) > 0:
-            print(f"⚠️ Nick '{nick}' ya existe")
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        usuario_existente = cursor.fetchone()
+        if usuario_existente:
+            print(f"⚠️ Nick '{nick}' ya existe (registrado como '{usuario_existente[1]}')")
             emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
+            conn.close()
             return
         
         password_hash = hash_password(password)
+        cursor.execute(
+            'INSERT INTO usuarios (nick, password_hash) VALUES (?, ?)',
+            (nick, password_hash)
+        )
+        conn.commit()
+        user_id = cursor.lastrowid
+        conn.close()
         
-        # Insertar nuevo usuario
-        response = supabase.table('usuarios').insert({
-            'nick': nick,
-            'password_hash': password_hash
-        }).execute()
-        
-        user_id = response.data[0]['id']
         print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
         emit('registro_response', {'success': True})
         
@@ -431,15 +434,19 @@ def login(data):
     sid = request.sid
     
     try:
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
+        
         if es_invitado:
             print(f"👤 Login de invitado: {nick}")
             
-            # Verificar si el invitado existe
-            result = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
+            cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+            usuario_existente = cursor.fetchone()
             
-            if result.data and len(result.data) > 0:
-                user_id = result.data[0]['id']
-                nick_real = result.data[0]['nick']
+            if usuario_existente:
+                user_id = usuario_existente[0]
+                nick_real = usuario_existente[1]
+                conn.close()
                 
                 usuarios_conectados[nick_real] = sid
                 sids_activos[sid] = True
@@ -449,15 +456,14 @@ def login(data):
                 return
             else:
                 password_hash = hash_password('invitado_temporal')
-                response = supabase.table('usuarios').insert({
-                    'nick': nick,
-                    'password_hash': password_hash,
-                    'elo_bullet': 1200,
-                    'elo_blitz': 1200,
-                    'elo_rapid': 1200
-                }).execute()
-                
-                user_id = response.data[0]['id']
+                cursor.execute(
+                    '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) 
+                       VALUES (?, ?, 1200, 1200, 1200)''',
+                    (nick, password_hash)
+                )
+                conn.commit()
+                user_id = cursor.lastrowid
+                conn.close()
                 
                 usuarios_conectados[nick] = sid
                 sids_activos[sid] = True
@@ -466,12 +472,9 @@ def login(data):
                 emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
                 return
         
-        # Login normal (no invitado)
-        result = supabase.table('usuarios').select('id, nick, password_hash').ilike('nick', nick).execute()
-        if result.data and len(result.data) > 0:
-            user = (result.data[0]['id'], result.data[0]['nick'], result.data[0]['password_hash'])
-        else:
-            user = None
+        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
+        user = cursor.fetchone()
+        conn.close()
         
         if not user:
             emit('login_response', {'success': False, 'message': 'Usuario no encontrado'})
@@ -534,7 +537,7 @@ def login(data):
     except Exception as e:
         print(f"❌ Error en login: {e}")
         emit('login_response', {'success': False, 'message': 'Error al iniciar sesión'})
-    
+
 @socketio.on('reconectar_sesion')
 def reconectar_sesion(data):
     global usuarios_conectados
@@ -1246,26 +1249,33 @@ def obtener_clasificacion(data):
         categoria = 'blitz'
     
     try:
+        conn = sqlite3.connect('elitechess.db')
+        cursor = conn.cursor()
+        
         columna_elo = f'elo_{categoria}'
         columna_ganadas = f'partidas_ganadas_{categoria}'
         columna_perdidas = f'partidas_perdidas_{categoria}'
         columna_tablas = f'partidas_tablas_{categoria}'
         
-        result = supabase.table('usuarios').select(
-            f'nick, {columna_elo}, {columna_ganadas}, {columna_perdidas}, {columna_tablas}'
-        ).order(columna_elo, desc=True).limit(50).execute()
+        cursor.execute(f'''
+            SELECT nick, {columna_elo}, {columna_ganadas}, {columna_perdidas}, {columna_tablas}
+            FROM usuarios 
+            ORDER BY {columna_elo} DESC 
+            LIMIT 50
+        ''')
         
         jugadores = []
-        for i, fila in enumerate(result.data, 1):
+        for i, fila in enumerate(cursor.fetchall(), 1):
             jugadores.append({
                 'posicion': i,
-                'nick': fila['nick'],
-                'elo': fila[columna_elo],
-                'ganadas': fila[columna_ganadas],
-                'perdidas': fila[columna_perdidas],
-                'tablas': fila[columna_tablas]
+                'nick': fila[0],
+                'elo': fila[1],
+                'ganadas': fila[2],
+                'perdidas': fila[3],
+                'tablas': fila[4]
             })
         
+        conn.close()
         emit('clasificacion_response', {
             'categoria': categoria,
             'jugadores': jugadores
@@ -1504,7 +1514,6 @@ if __name__ == '__main__':
     print(f"📱 Otros PCs: http://{ip_local}:5000")
     print("="*50)
     
-    port = int(os.environ.get('PORT', 10000))
-socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
     
     
