@@ -564,44 +564,6 @@ def verificar_registro(data):
     emit('registro_permitido', {'nick': nick})
 
 @socketio.on('eliminar_cuenta')
-def eliminar_cuenta(data):
-    nick = data.get('nick')
-    password = data.get('password')
-    ip_cliente = request.remote_addr
-    
-    try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        user = cursor.fetchone()
-        
-        if not user:
-            emit('eliminar_response', {'success': False, 'message': 'Usuario no encontrado'})
-            conn.close()
-            return
-        
-        user_id, nick_real, stored_password = user
-        
-        if not verify_password(stored_password, password):
-            emit('eliminar_response', {'success': False, 'message': 'Contraseña incorrecta'})
-            conn.close()
-            return
-        
-        cursor.execute('DELETE FROM usuarios WHERE nick = ?', (nick_real,))
-        conn.commit()
-        conn.close()
-        
-        if ip_cliente in control_nicks and nick_real in control_nicks[ip_cliente]:
-            control_nicks[ip_cliente].remove(nick_real)
-            print(f"🗑️ Nick '{nick_real}' eliminado desde IP {ip_cliente}")
-        
-        emit('eliminar_response', {'success': True, 'message': 'Cuenta eliminada correctamente'})
-        print(f"✅ Cuenta '{nick_real}' eliminada permanentemente")
-        
-    except Exception as e:
-        print(f"❌ Error al eliminar cuenta: {e}")
-        emit('eliminar_response', {'success': False, 'message': 'Error al eliminar cuenta'})
 
 @socketio.on('buscar_partida')
 def buscar_partida(data):
