@@ -9,6 +9,9 @@ import time
 import threading
 import psycopg2
 app = Flask(__name__, static_folder='.', static_url_path='')
+
+def get_db_connection():
+    return psycopg2.connect(os.environ.get('DATABASE_URL'))
 app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
 
