@@ -89,19 +89,23 @@ def calcular_elo(elo_jugador, elo_rival, resultado, k_factor=32):
 
 def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
+        DATABASE_URL = os.environ.get('DATABASE_URL')
+        conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
+            
         if resultado == 'victoria':
             columna = f'partidas_ganadas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         elif resultado == 'derrota':
             columna = f'partidas_perdidas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         else:
             columna = f'partidas_tablas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
+            
+        # Fíjate en el cambio de ? a %s
+        cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(%s)', (nick,))
+        
         conn.commit()
         conn.close()
         print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
