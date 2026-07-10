@@ -126,7 +126,7 @@ def obtener_elo(nick, categoria='blitz'):
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
+        
         cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
