@@ -112,7 +112,7 @@ def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
 
 def obtener_elo(nick, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
+        
         cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
