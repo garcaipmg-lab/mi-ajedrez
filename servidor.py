@@ -467,7 +467,7 @@ def login(data):
                 emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
                 return
         
-           else:
+   else:
         result = supabase.table('usuarios').select('id, nick, password_hash').ilike('nick', nick).execute()
         if result.data and len(result.data) > 0:
             user = (result.data[0]['id'], result.data[0]['nick'], result.data[0]['password_hash'])
