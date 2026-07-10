@@ -103,49 +103,60 @@ def calcular_elo(elo_jugador, elo_rival, resultado, k_factor=32):
 
 def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
+        if supabase is None:
+            print("️ Supabase no configurado")
+            return
+        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
-        if resultado == 'victoria':
-            columna = f'partidas_ganadas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
-        elif resultado == 'derrota':
-            columna = f'partidas_perdidas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
-        else:
-            columna = f'partidas_tablas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
-        conn.commit()
-        conn.close()
+        
+        columna = f'partidas_{resultado}_{categoria}'
+        
+        # Obtener valor actual
+        result = supabase.table('usuarios').select(columna).ilike('nick', nick).execute()
+        
+        if result.data and len(result.data) > 0:
+            valor_actual = result.data[0][columna]
+            supabase.table('usuarios').update({
+                columna: valor_actual + 1
+            }).ilike('nick', nick).execute()
+        
         print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
     except Exception as e:
         print(f"❌ Error al actualizar estadísticas {categoria}: {e}")
 
 def obtener_elo(nick, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
+        if supabase is None:
+            return 1200
+        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
+        
         columna = f'elo_{categoria}'
-        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        resultado = cursor.fetchone()
-        conn.close()
-        return resultado[0] if resultado else 1200
-    except:
+        result = supabase.table('usuarios').select(columna).ilike('nick', nick).execute()
+        
+        if result.data and len(result.data) > 0:
+            return result.data[0][columna]
+        return 1200
+    except Exception as e:
+        print(f" Error obtener ELO: {e}")
         return 1200
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
+        if supabase is None:
+            print("⚠️ Supabase no configurado")
+            return
+        
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
+        
         columna = f'elo_{categoria}'
-        cursor.execute(f'UPDATE usuarios SET {columna} = ? WHERE LOWER(nick) = LOWER(?)', (nuevo_elo, nick))
-        conn.commit()
-        conn.close()
+        supabase.table('usuarios').update({
+            columna: nuevo_elo
+        }).ilike('nick', nick).execute()
+        
         print(f"✅ ELO {categoria} actualizado para {nick}: {nuevo_elo}")
     except Exception as e:
         print(f"❌ Error actualizar ELO {categoria}: {e}")
