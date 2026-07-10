@@ -392,27 +392,23 @@ def registro(data):
         })
         return
     
-    try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        usuario_existente = cursor.fetchone()
-        if usuario_existente:
-            print(f"⚠️ Nick '{nick}' ya existe (registrado como '{usuario_existente[1]}')")
+       try:
+        # Verificar si el usuario existe
+        result = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
+        if result.data and len(result.data) > 0:
+            print(f"⚠️ Nick '{nick}' ya existe")
             emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
-            conn.close()
             return
         
         password_hash = hash_password(password)
-        cursor.execute(
-            'INSERT INTO usuarios (nick, password_hash) VALUES (?, ?)',
-            (nick, password_hash)
-        )
-        conn.commit()
-        user_id = cursor.lastrowid
-        conn.close()
         
+        # Insertar nuevo usuario
+        response = supabase.table('usuarios').insert({
+            'nick': nick,
+            'password_hash': password_hash
+        }).execute()
+        
+        user_id = response.data[0]['id']
         print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
         emit('registro_response', {'success': True})
         
@@ -428,20 +424,16 @@ def login(data):
     es_invitado = data.get('invitado', False)
     sid = request.sid
     
-    try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
+        try:
         if es_invitado:
             print(f"👤 Login de invitado: {nick}")
             
-            cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-            usuario_existente = cursor.fetchone()
+            # Verificar si el invitado existe
+            result = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
             
-            if usuario_existente:
-                user_id = usuario_existente[0]
-                nick_real = usuario_existente[1]
-                conn.close()
+            if result.data and len(result.data) > 0:
+                user_id = result.data[0]['id']
+                nick_real = result.data[0]['nick']
                 
                 usuarios_conectados[nick_real] = sid
                 sids_activos[sid] = True
@@ -451,14 +443,22 @@ def login(data):
                 return
             else:
                 password_hash = hash_password('invitado_temporal')
-                cursor.execute(
-                    '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) 
-                       VALUES (?, ?, 1200, 1200, 1200)''',
-                    (nick, password_hash)
-                )
-                conn.commit()
-                user_id = cursor.lastrowid
-                conn.close()
+                response = supabase.table('usuarios').insert({
+                    'nick': nick,
+                    'password_hash': password_hash,
+                    'elo_bullet': 1200,
+                    'elo_blitz': 1200,
+                    'elo_rapid': 1200
+                }).execute()
+                
+                user_id = response.data[0]['id']
+                
+                usuarios_conectados[nick] = sid
+                sids_activos[sid] = True
+                
+                print(f"✅ Nuevo invitado registrado: {nick} (ID: {user_id})")
+                emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
+                return
                 
                 usuarios_conectados[nick] = sid
                 sids_activos[sid] = True
@@ -467,9 +467,11 @@ def login(data):
                 emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
                 return
         
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        user = cursor.fetchone()
-        conn.close()
+       result = supabase.table('usuarios').select('id, nick, password_hash').ilike('nick', nick).execute()
+if result.data and len(result.data) > 0:
+    user = (result.data[0]['id'], result.data[0]['nick'], result.data[0]['password_hash'])
+else:
+    user = None
         
         if not user:
             emit('login_response', {'success': False, 'message': 'Usuario no encontrado'})
