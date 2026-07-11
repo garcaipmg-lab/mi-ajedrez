@@ -8,20 +8,11 @@ import hashlib
 import os
 import time
 import threading
-from supabase import create_client, Client
+
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
-# --- CONEXIÓN SUPABASE ---
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Conectado a Supabase")
-else:
-    print("❌ ERROR: Variables de entorno Supabase no configuradas")
-    supabase = None
 # --- BASE DE DATOS ---
 def init_db():
     conn = sqlite3.connect('elitechess.db')
