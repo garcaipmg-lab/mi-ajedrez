@@ -11,13 +11,12 @@ from supabase import create_client, Client
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
-socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_interval=5, ping_timeout=10)
 
 # --- CONEXIÓN A SUPABASE ---
 # ⚠️ REEMPLAZA ESTOS VALORES CON LOS TUYOS
-SUPABASE_URL = "https://stizpdyftzoeuwigxgbi.supabase.co"
-SUPABASE_KEY = "PEGA_AQUI_TU_ANON_KEY"
-
+SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://stizpdyftzoeuwigxgbi.supabase.co')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- VARIABLES GLOBALES ---
