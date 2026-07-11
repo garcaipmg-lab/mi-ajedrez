@@ -3,47 +3,22 @@ from flask_socketio import SocketIO, emit, join_room
 import uuid
 import socket
 import random
-import sqlite3
 import hashlib
 import os
 import time
 import threading
+from supabase import create_client, Client
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = 'elitechess_secreto_2026'
 socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=5, ping_timeout=10)
 
-# --- BASE DE DATOS ---
-def init_db():
-    conn = sqlite3.connect('elitechess.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nick TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            elo_bullet INTEGER DEFAULT 1200,
-            elo_blitz INTEGER DEFAULT 1200,
-            elo_rapid INTEGER DEFAULT 1200,
-            partidas_ganadas INTEGER DEFAULT 0,
-            partidas_perdidas INTEGER DEFAULT 0,
-            partidas_tablas INTEGER DEFAULT 0,
-            partidas_ganadas_bullet INTEGER DEFAULT 0,
-            partidas_perdidas_bullet INTEGER DEFAULT 0,
-            partidas_tablas_bullet INTEGER DEFAULT 0,
-            partidas_ganadas_blitz INTEGER DEFAULT 0,
-            partidas_perdidas_blitz INTEGER DEFAULT 0,
-            partidas_tablas_blitz INTEGER DEFAULT 0,
-            partidas_ganadas_rapid INTEGER DEFAULT 0,
-            partidas_perdidas_rapid INTEGER DEFAULT 0,
-            partidas_tablas_rapid INTEGER DEFAULT 0,
-            fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+# --- CONEXIÓN A SUPABASE ---
+# ⚠️ REEMPLAZA ESTOS VALORES CON LOS TUYOS
+SUPABASE_URL = "https://stizpdyftzoeuwigxgbi.supabase.co"
+SUPABASE_KEY = "PEGA_AQUI_TU_ANON_KEY"
 
-init_db()
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- VARIABLES GLOBALES ---
 cola_espera = [] 
@@ -119,49 +94,50 @@ def calcular_elo(elo_jugador, elo_rival, resultado, k_factor=32):
 
 def actualizar_estadisticas_db(nick, resultado, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
+        
+        columna = None
         if resultado == 'victoria':
             columna = f'partidas_ganadas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         elif resultado == 'derrota':
             columna = f'partidas_perdidas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
         else:
             columna = f'partidas_tablas_{categoria}'
-            cursor.execute(f'UPDATE usuarios SET {columna} = {columna} + 1 WHERE LOWER(nick) = LOWER(?)', (nick,))
-        conn.commit()
-        conn.close()
-        print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
+        
+        # Obtener valor actual
+        response = supabase.table('usuarios').select(columna).eq('nick', nick).execute()
+        if response.data and len(response.data) > 0:
+            valor_actual = response.data[0][columna]
+            nuevo_valor = valor_actual + 1
+            
+            supabase.table('usuarios').update({columna: nuevo_valor}).eq('nick', nick).execute()
+            print(f"✅ Estadísticas {categoria} actualizadas para {nick}: {resultado}")
+        else:
+            print(f"⚠️ Usuario {nick} no encontrado para actualizar estadísticas")
     except Exception as e:
         print(f"❌ Error al actualizar estadísticas {categoria}: {e}")
 
 def obtener_elo(nick, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
         columna = f'elo_{categoria}'
-        cursor.execute(f'SELECT {columna} FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        resultado = cursor.fetchone()
-        conn.close()
-        return resultado[0] if resultado else 1200
+        
+        response = supabase.table('usuarios').select(columna).eq('nick', nick).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0][columna]
+        return 1200
     except:
         return 1200
 
 def actualizar_elo_db(nick, nuevo_elo, categoria='blitz'):
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
         if categoria not in ['bullet', 'blitz', 'rapid']:
             categoria = 'blitz'
         columna = f'elo_{categoria}'
-        cursor.execute(f'UPDATE usuarios SET {columna} = ? WHERE LOWER(nick) = LOWER(?)', (nuevo_elo, nick))
-        conn.commit()
-        conn.close()
+        
+        supabase.table('usuarios').update({columna: nuevo_elo}).eq('nick', nick).execute()
         print(f"✅ ELO {categoria} actualizado para {nick}: {nuevo_elo}")
     except Exception as e:
         print(f"❌ Error actualizar ELO {categoria}: {e}")
@@ -178,7 +154,7 @@ def handle_connect():
 def handle_disconnect():
     global usuarios_conectados, cola_espera, partidas_activas, temporizadores_reconexion
     jugador_id = request.sid
-    print(f"🔌 Jugador {jugador_id} desconectado")
+    print(f" Jugador {jugador_id} desconectado")
     
     if jugador_id in sids_activos:
         del sids_activos[jugador_id]
@@ -285,7 +261,7 @@ def handle_disconnect():
             print(f"   ✅ Partida finalizada por desconexión repetida")
             return
         
-        print(f"   ⏳ Primera desconexión - Iniciando timer de 45s")
+        print(f"    Primera desconexión - Iniciando timer de 45s")
         
         if otro_jugador_sid and otro_jugador_sid in sids_activos:
             print(f"   🔔 Notificando a {otro_jugador_sid}")
@@ -357,19 +333,18 @@ def handle_disconnect():
                 
                 print(f"   ✅ Limpieza completada")
         
-        # 🔥 Timer con threading (funciona bien con socketio.emit)
         timer = threading.Timer(45, timeout_reconexion)
         timer.daemon = True
         timer.start()
         
         if nick_desconectado:
             temporizadores_reconexion[nick_desconectado] = timer
-            print(f"   💾 Temporizador guardado para {nick_desconectado}")
+            print(f"    Temporizador guardado para {nick_desconectado}")
         
         print(f"⏳ Temporizador 45s iniciado para {nick_desconectado}")
         return
 
-    print(f"🔓 Liberando sesión normal (no estaba en partida)")
+    print(f" Liberando sesión normal (no estaba en partida)")
     
     if nick_desconectado and nick_desconectado in usuarios_conectados:
         del usuarios_conectados[nick_desconectado]
@@ -398,26 +373,20 @@ def registro(data):
         return
     
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        usuario_existente = cursor.fetchone()
-        if usuario_existente:
-            print(f"⚠️ Nick '{nick}' ya existe (registrado como '{usuario_existente[1]}')")
+        # Verificar si el usuario ya existe
+        response = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
+        if response.data and len(response.data) > 0:
+            print(f"⚠️ Nick '{nick}' ya existe")
             emit('registro_response', {'success': False, 'message': 'El nick ya está en uso'})
-            conn.close()
             return
         
         password_hash = hash_password(password)
-        cursor.execute(
-            'INSERT INTO usuarios (nick, password_hash) VALUES (?, ?)',
-            (nick, password_hash)
-        )
-        conn.commit()
-        user_id = cursor.lastrowid
-        conn.close()
+        response = supabase.table('usuarios').insert({
+            'nick': nick,
+            'password_hash': password_hash
+        }).execute()
         
+        user_id = response.data[0]['id']
         print(f"✅ Usuario registrado: {nick} (ID: {user_id})")
         emit('registro_response', {'success': True})
         
@@ -434,19 +403,14 @@ def login(data):
     sid = request.sid
     
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
         if es_invitado:
-            print(f"👤 Login de invitado: {nick}")
+            print(f" Login de invitado: {nick}")
             
-            cursor.execute('SELECT id, nick FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-            usuario_existente = cursor.fetchone()
+            response = supabase.table('usuarios').select('id, nick').ilike('nick', nick).execute()
             
-            if usuario_existente:
-                user_id = usuario_existente[0]
-                nick_real = usuario_existente[1]
-                conn.close()
+            if response.data and len(response.data) > 0:
+                user_id = response.data[0]['id']
+                nick_real = response.data[0]['nick']
                 
                 usuarios_conectados[nick_real] = sid
                 sids_activos[sid] = True
@@ -456,14 +420,14 @@ def login(data):
                 return
             else:
                 password_hash = hash_password('invitado_temporal')
-                cursor.execute(
-                    '''INSERT INTO usuarios (nick, password_hash, elo_bullet, elo_blitz, elo_rapid) 
-                       VALUES (?, ?, 1200, 1200, 1200)''',
-                    (nick, password_hash)
-                )
-                conn.commit()
-                user_id = cursor.lastrowid
-                conn.close()
+                response = supabase.table('usuarios').insert({
+                    'nick': nick,
+                    'password_hash': password_hash,
+                    'elo_bullet': 1200,
+                    'elo_blitz': 1200,
+                    'elo_rapid': 1200
+                }).execute()
+                user_id = response.data[0]['id']
                 
                 usuarios_conectados[nick] = sid
                 sids_activos[sid] = True
@@ -472,15 +436,16 @@ def login(data):
                 emit('login_response', {'success': True, 'nick': nick, 'userId': user_id, 'invitado': True})
                 return
         
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        user = cursor.fetchone()
-        conn.close()
+        response = supabase.table('usuarios').select('id, nick, password_hash').ilike('nick', nick).execute()
         
-        if not user:
+        if not response.data or len(response.data) == 0:
             emit('login_response', {'success': False, 'message': 'Usuario no encontrado'})
             return
         
-        user_id, nick_real, stored_password = user
+        user = response.data[0]
+        user_id = user['id']
+        nick_real = user['nick']
+        stored_password = user['password_hash']
         
         if verify_password(stored_password, password):
             if nick_real in temporizadores_reconexion:
@@ -592,27 +557,22 @@ def eliminar_cuenta(data):
     ip_cliente = request.remote_addr
     
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
+        response = supabase.table('usuarios').select('id, nick, password_hash').ilike('nick', nick).execute()
         
-        cursor.execute('SELECT id, nick, password_hash FROM usuarios WHERE LOWER(nick) = LOWER(?)', (nick,))
-        user = cursor.fetchone()
-        
-        if not user:
+        if not response.data or len(response.data) == 0:
             emit('eliminar_response', {'success': False, 'message': 'Usuario no encontrado'})
-            conn.close()
             return
         
-        user_id, nick_real, stored_password = user
+        user = response.data[0]
+        user_id = user['id']
+        nick_real = user['nick']
+        stored_password = user['password_hash']
         
         if not verify_password(stored_password, password):
             emit('eliminar_response', {'success': False, 'message': 'Contraseña incorrecta'})
-            conn.close()
             return
         
-        cursor.execute('DELETE FROM usuarios WHERE nick = ?', (nick_real,))
-        conn.commit()
-        conn.close()
+        supabase.table('usuarios').delete().eq('nick', nick_real).execute()
         
         if ip_cliente in control_nicks and nick_real in control_nicks[ip_cliente]:
             control_nicks[ip_cliente].remove(nick_real)
@@ -650,7 +610,7 @@ def buscar_partida(data):
     if len(cola_espera) > 0:
         for i, rival in enumerate(cola_espera):
             if rival['data'].get('usuario', '').lower() == usuario.lower():
-                print(f"⚠️ {usuario} intentando jugar contra sí mismo")
+                print(f"️ {usuario} intentando jugar contra sí mismo")
                 continue
             
             tiempo_rival = rival['data'].get('tiempo', 0)
@@ -659,7 +619,7 @@ def buscar_partida(data):
             incremento_mio = data.get('incremento', 0)
             
             if tiempo_rival != tiempo_mio or incremento_rival != incremento_mio:
-                print(f"⏳ {usuario} ({tiempo_mio}+{incremento_mio}s) no coincide con {rival['data'].get('usuario')} ({tiempo_rival}+{incremento_rival}s)")
+                print(f" {usuario} ({tiempo_mio}+{incremento_mio}s) no coincide con {rival['data'].get('usuario')} ({tiempo_rival}+{incremento_rival}s)")
                 continue
             
             rival_color = rival['data']['color']
@@ -795,12 +755,10 @@ def solicitar_estado_partida(data):
     if sala_id and sala_id in salas:
         sala = salas[sala_id]
         
-        # ✅ OBTENER FEN DESDE estado_partidas (donde realmente se guarda)
         fen_actual = 'start'
         if sala_id in estado_partidas:
             fen_actual = estado_partidas[sala_id].get('fen', 'start')
         
-        # ✅ OBTENER TIEMPOS DESDE sala (donde realmente se guardan)
         tiempo_inicial = sala.get('tiempo', 5) * 60
         segundos_blanco = sala.get('segundos_blanco', tiempo_inicial)
         segundos_negro = sala.get('segundos_negro', tiempo_inicial)
@@ -890,7 +848,7 @@ def fin_partida(data):
 
     if sala_id in control_tablas:
         del control_tablas[sala_id]
-        print(f"🔄 Control de tablas reseteado en sala {sala_id}")
+        print(f" Control de tablas reseteado en sala {sala_id}")
     
     if sala_id in salas:
         salas[sala_id]['partida_terminada'] = True
@@ -912,7 +870,7 @@ def fin_partida(data):
             elo_blanco = obtener_elo(nick_blanco, categoria)
             elo_negro = obtener_elo(nick_negro, categoria)
             
-            print(f"🎮 Partida: {nick_blanco} (ELO {categoria}: {elo_blanco}) vs {nick_negro} (ELO {categoria}: {elo_negro})")
+            print(f" Partida: {nick_blanco} (ELO {categoria}: {elo_blanco}) vs {nick_negro} (ELO {categoria}: {elo_negro})")
             print(f"🏆 Ganador: {ganador}")
             
             if ganador == 'blanco':
@@ -963,7 +921,6 @@ def fin_partida(data):
         }, room=sala_id)
         print(f"✅ Partida finalizada en sala {sala_id} - Motivo: {motivo}")              
         
-        # Si la partida es de torneo, actualizar puntos
         if sala_id in partidas_torneo_activas:
             partida_torneo = partidas_torneo_activas[sala_id]
             torneo_id = partida_torneo['torneo_id']
@@ -971,21 +928,18 @@ def fin_partida(data):
             if torneo_id in torneos:
                 torneo = torneos[torneo_id]
                 
-                # Actualizar puntos según resultado
                 if ganador == 'white':
                     torneo['puntos'][partida_torneo['jugador1']] = torneo['puntos'].get(partida_torneo['jugador1'], 0) + 2
                     torneo['puntos'][partida_torneo['jugador2']] = torneo['puntos'].get(partida_torneo['jugador2'], 0) + 0
                 elif ganador == 'black':
                     torneo['puntos'][partida_torneo['jugador1']] = torneo['puntos'].get(partida_torneo['jugador1'], 0) + 0
                     torneo['puntos'][partida_torneo['jugador2']] = torneo['puntos'].get(partida_torneo['jugador2'], 0) + 2
-                else:  # tablas
+                else:
                     torneo['puntos'][partida_torneo['jugador1']] = torneo['puntos'].get(partida_torneo['jugador1'], 0) + 1
                     torneo['puntos'][partida_torneo['jugador2']] = torneo['puntos'].get(partida_torneo['jugador2'], 0) + 1
                 
-                # Eliminar partida activa
                 del partidas_torneo_activas[sala_id]
                 
-                # Enviar clasificación actualizada a todos los del torneo
                 for jugador in torneo['jugadores']:
                     for sid, nick in usuarios_conectados.items():
                         if nick == jugador:
@@ -1088,7 +1042,7 @@ def aceptar_tablas(data):
     sala_id = data.get('sala')
     
     if sala_id in salas and salas[sala_id].get('partida_terminada', False):
-        print(f"⚠️ Intento de tablas en partida ya terminada en {sala_id}, ignorando...")
+        print(f"️ Intento de tablas en partida ya terminada en {sala_id}, ignorando...")
         return
     
     if sala_id in salas:
@@ -1175,17 +1129,14 @@ def aceptar_revancha(data):
             print(f"❌ Intento de revancha con partida en curso en sala {sala_id}")
             return
         
-        # ✅ RESETEAR ESTADO DE LA PARTIDA
         sala['partida_terminada'] = False
         sala['estadisticas_actualizadas'] = False
         
-        # ✅ RESETEAR TIEMPOS al tiempo inicial
         tiempo_inicial = sala.get('tiempo', 5) * 60
         sala['segundos_blanco'] = tiempo_inicial
         sala['segundos_negro'] = tiempo_inicial
         print(f"⏱️ Tiempos reseteados a {tiempo_inicial}s para revancha")
         
-        # ✅ INTERCAMBIAR COLORES
         color_blanco = sala.get('blanco')
         color_negro = sala.get('negro')
         
@@ -1194,7 +1145,6 @@ def aceptar_revancha(data):
         
         print(f"🔄 Colores intercambiados en sala {sala_id}")
         
-        # ✅ LIMPIAR CONTADOR DE DESCONEXIONES para esta sala
         nb = sala.get('blanco')
         nn = sala.get('negro')
         
@@ -1209,10 +1159,9 @@ def aceptar_revancha(data):
             del desconexiones_por_jugador[clave_negro]
             print(f"🗑️ Contador de desconexiones limpio para {nn}")
         
-        # ✅ LIMPIAR ESTADO_PARTIDAS (posición del tablero)
         if sala_id in estado_partidas:
             del estado_partidas[sala_id]
-            print(f"🗑️ Estado de partida limpio para revancha")
+            print(f"️ Estado de partida limpio para revancha")
         
         elo_blanco = sala.get('elo_blanco', 1200)
         elo_negro = sala.get('elo_negro', 1200)
@@ -1249,33 +1198,26 @@ def obtener_clasificacion(data):
         categoria = 'blitz'
     
     try:
-        conn = sqlite3.connect('elitechess.db')
-        cursor = conn.cursor()
-        
         columna_elo = f'elo_{categoria}'
         columna_ganadas = f'partidas_ganadas_{categoria}'
         columna_perdidas = f'partidas_perdidas_{categoria}'
         columna_tablas = f'partidas_tablas_{categoria}'
         
-        cursor.execute(f'''
-            SELECT nick, {columna_elo}, {columna_ganadas}, {columna_perdidas}, {columna_tablas}
-            FROM usuarios 
-            ORDER BY {columna_elo} DESC 
-            LIMIT 50
-        ''')
+        response = supabase.table('usuarios').select(
+            f'nick, {columna_elo}, {columna_ganadas}, {columna_perdidas}, {columna_tablas}'
+        ).order(columna_elo, desc=True).limit(50).execute()
         
         jugadores = []
-        for i, fila in enumerate(cursor.fetchall(), 1):
+        for i, fila in enumerate(response.data, 1):
             jugadores.append({
                 'posicion': i,
-                'nick': fila[0],
-                'elo': fila[1],
-                'ganadas': fila[2],
-                'perdidas': fila[3],
-                'tablas': fila[4]
+                'nick': fila['nick'],
+                'elo': fila[columna_elo],
+                'ganadas': fila[columna_ganadas],
+                'perdidas': fila[columna_perdidas],
+                'tablas': fila[columna_tablas]
             })
         
-        conn.close()
         emit('clasificacion_response', {
             'categoria': categoria,
             'jugadores': jugadores
@@ -1328,14 +1270,13 @@ def obtener_lista_torneos():
                 'jugadores': len(torneo['jugadores'])
             })
     return lista
+
 @socketio.on('pedir_torneos')
 def pedir_torneos():
-    """Envía la lista de torneos activos al que lo pide"""
-    print(" Alguien pidió la lista de torneos")
+    print("📋 Alguien pidió la lista de torneos")
     emit('lista_torneos_actualizada', obtener_lista_torneos())
 
 def obtener_clasificacion_torneo(torneo_id):
-    """Obtiene la clasificación ordenada por puntos"""
     if torneo_id not in torneos:
         return []
     
@@ -1379,7 +1320,6 @@ def unirse_torneo(data):
         
 @socketio.on('registrar_sesion_torneo')
 def registrar_sesion_torneo(data):
-    """Registra al jugador en usuarios_conectados"""
     nick = data.get('nick')
     sid = request.sid
     
@@ -1401,61 +1341,46 @@ def buscar_partida_torneo(data):
     if torneo_id not in colas_torneo:
         colas_torneo[torneo_id] = []
     
-    # Si ya está en la cola, no hacer nada
     if jugador in colas_torneo[torneo_id]:
         print(f"ℹ️ {jugador} ya está buscando partida")
         return
     
-    # Añadir a la cola
     colas_torneo[torneo_id].append(jugador)
     
-    # Si hay 2 o más jugadores en la cola, intentar emparejar
     if len(colas_torneo[torneo_id]) >= 2:
         jugador1 = colas_torneo[torneo_id].pop(0)
         jugador2 = colas_torneo[torneo_id].pop(0)
         
-        # Verificar que no sean el mismo
         if jugador1 == jugador2:
             print(f"⚠️ Mismo jugador, reencolando")
             colas_torneo[torneo_id].append(jugador2)
             return
         
-        print(f"️ Emparejando: {jugador1} vs {jugador2}")
+        print(f"🎯 Emparejando: {jugador1} vs {jugador2}")
         
-        # Buscar SID de jugador1
         sid_jugador1 = None
         print(f"🔎 Buscando SID para {jugador1}")
         for sid, nick in usuarios_conectados.items():
             print(f"   - {nick} (SID: {sid})")
             if nick == jugador1:
                 sid_jugador1 = sid
-                join_room(sala_id, sid=sid)
-                partidas_activas[sid] = sala_id
-                print(f"✅ {jugador1} unido a sala {sala_id}")
                 break
         
-        # Buscar SID de jugador2
         sid_jugador2 = None
         print(f"🔎 Buscando SID para {jugador2}")
         for sid, nick in usuarios_conectados.items():
             print(f"   - {nick} (SID: {sid})")
             if nick == jugador2:
                 sid_jugador2 = sid
-                join_room(sala_id, sid=sid)
-                partidas_activas[sid] = sala_id
-                print(f"✅ {jugador2} unido a sala {sala_id}")
                 break
         
-        # Generar ID de sala
         sala_id = str(uuid.uuid4())[:8]
         
-        # Asignar colores aleatorios
         if random.random() < 0.5:
             color1, color2 = 'white', 'black'
         else:
             color1, color2 = 'black', 'white'
         
-        # Guardar partida activa
         partidas_torneo_activas[sala_id] = {
             'torneo_id': torneo_id,
             'jugador1': jugador1,
@@ -1467,7 +1392,6 @@ def buscar_partida_torneo(data):
         print(f"🎮 Sala creada: {sala_id}")
         print(f"📊 SID encontrados: {sid_jugador1}, {sid_jugador2}")
         
-        # ENVIAR EVENTOS A AMBOS JUGADORES
         if sid_jugador1:
             print(f"📤 Enviando a {jugador1} (SID: {sid_jugador1})")
             socketio.emit('partida_torneo_encontrada', {
@@ -1490,7 +1414,6 @@ def buscar_partida_torneo(data):
         else:
             print(f"❌ No se encontró SID para {jugador2}")
         
-        # Limpiar estado de búsqueda
         if sid_jugador1:
             socketio.emit('puedes_buscar', room=sid_jugador1)
         if sid_jugador2:
@@ -1507,7 +1430,7 @@ if __name__ == '__main__':
     finally:
         s.close()
     
-    print("\n👑 ELITECHESS SERVER")
+    print("\n ELITECHESS SERVER")
     print("="*50)
     print(f"📍 Local:   http://localhost:5000")
     print(f"🌐 Red:     http://{ip_local}:5000")
@@ -1515,5 +1438,3 @@ if __name__ == '__main__':
     print("="*50)
     
     socketio.run(app, host='0.0.0.0', port=5000, debug=False)
-    
-    
